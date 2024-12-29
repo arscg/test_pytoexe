@@ -96,7 +96,7 @@ def convertir_date_locale_en_timestamp(df):
     
     return df
 
-def traiter_fichier(chemin_fichier, date, parquets):
+def traiter_fichier(chemin_fichier, date, parquets, bague):
     """
     Traite un fichier CSV et renvoie le DataFrame correspondant.
 
@@ -124,6 +124,7 @@ def traiter_fichier(chemin_fichier, date, parquets):
    
     # Ajouter la nouvelle colonne parquet en utilisant la liste de correspondance
     df['parquet'] = df['mangeoire'].map(parquets)
+    df['bague'] = df['source'].map(bague)
     
     # Ajout de la colonne delta pour le jour et la semaine
     df['jour'] = (pd.to_timedelta(df['timestamp_num'] - date, unit='s').dt.days) + 1
@@ -133,7 +134,7 @@ def traiter_fichier(chemin_fichier, date, parquets):
     df = df.drop(columns=['date_locale', 'heures', 'timestamp', 'timestamp_num'])
     
     # Groupement du DataFrame par les colonnes spécifiées
-    grouped_df = df.groupby(['date', 'mangeoire', 'evenement', 'source', 'Fichier', 'parquet', 'jour', 'semaine'])
+    grouped_df = df.groupby(['date', 'mangeoire', 'evenement', 'source', 'bague', 'Fichier', 'parquet', 'jour', 'semaine'])
     
     # Calcul des sommes pour les colonnes spécifiées
     result_df = grouped_df[['avant_g', 'apres_g', 'conso_g', 'duree_s']].sum().reset_index()
@@ -161,6 +162,7 @@ def main():
     
     date = recuperer_date_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))  # Récupérer la date à partir du fichier YAML
     parquet = recuperer_parquet_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
+    bague = recuperer_bague_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
     
     print (date)
 
@@ -181,7 +183,7 @@ def main():
             print(f"Le répertoire {chemin_dossier_courant} ne contient aucun fichier .csv.")
             continue  # passer à la prochaine itération
         
-        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date, parquet)  # Traiter le dossier
+        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date, parquet, bague)  # Traiter le dossier
         
         end_time_file = time.time()  # Mesurer le temps d'arrêt pour ce fichier
         
@@ -199,7 +201,7 @@ def main():
     
     return results
 
-def traiter_dossier(root, files, date, parquets):
+def traiter_dossier(root, files, date, parquets, bague):
     """
     Traite un dossier contenant des fichiers CSV et renvoie le DataFrame final résultant de la concaténation.
 
@@ -231,7 +233,7 @@ def traiter_dossier(root, files, date, parquets):
             if chemin_fichier not in existing_file_name:
                 
                 # Lecture du fichier CSV et ajout d'une colonne avec le nom du fichier
-                df, stats_apres = traiter_fichier(chemin_fichier, date, parquets)  # Traitement du fichier
+                df, stats_apres = traiter_fichier(chemin_fichier, date, parquets, bague)  # Traitement du fichier
             
                 # Ajouter le DataFrame au liste des DataFrames
                 dfs.append((df, stats_apres ))
@@ -333,7 +335,30 @@ def recuperer_parquet_yaml(chemin_fichier):
         print("Le fichier YAML n'existe pas.")
         return None
     except KeyError:
-        print("La clé 'date' n'est pas présente dans le fichier YAML.")
+        print("La clé 'liste_mangeoires' n'est pas présente dans le fichier YAML.")
+        return None
+
+def recuperer_bague_yaml(chemin_fichier):
+    """
+    Récupère une bague à partir d'un fichier YAML.
+    
+    Args:
+        chemin_fichier (str): Chemin du fichier YAML contenant la liste des bagues.
+    
+    Returns:
+        dict: Dictionnaire contenant les informations de la bague.
+    """
+
+    try:
+        with open(chemin_fichier, 'r') as f:
+            data = yaml.safe_load(f)
+            date_str = data['bague']
+        return date_str
+    except FileNotFoundError:
+        print("Le fichier YAML n'existe pas.")
+        return None
+    except KeyError:
+        print("La clé 'bague' n'est pas présente dans le fichier YAML.")
         return None
 
 if __name__ == "__main__":
