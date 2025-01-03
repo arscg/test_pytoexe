@@ -135,6 +135,7 @@ def traiter_fichier(chemin_fichier, date, parquets, bague):
     
     df['heure'] = df['heures'].str.split(':').str[0]
     
+    
     # Groupement du DataFrame par les colonnes spécifiées
     grouped_df = df.groupby(['date', 'mangeoire', 'evenement', 'source', 'bague', 'Fichier', 'parquet', 'heure',  'jour', 'semaine'])
     
@@ -486,6 +487,7 @@ SELECT
 	sources_concatenées,
 	jour, 
     heure,
+    semaine,
 	sum(conso_g) as quantite_grammes,	
     sum(compt) as nombre_prises,
     sum(duree_s) as duree_prises
@@ -504,7 +506,8 @@ GROUP BY	parquet,
         	bague,
         	sources_concatenées,
         	jour,
-            heure;
+            heure,
+            semaine;
 """)
         conn.commit()  # Sauvegarde des modifications
     except sqlite3.OperationalError as e:
@@ -522,7 +525,7 @@ def creer_vue_heure(colonne):
     
     try:
         query_parts = [
-            f"MAX(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
+            f"SUM(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
             for h in range(24)
         ]
         
@@ -552,7 +555,7 @@ def creer_vue_heure_parquet(colonne):
     
     try:
         query_parts = [
-            f"MAX(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
+            f"SUM(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
             for h in range(24)
         ]
         
@@ -568,7 +571,7 @@ SELECT
 FROM 
     bague_heure
 GROUP BY 
-    parquet, evenement, bague, jour, jour;
+    parquet, evenement, bague, jour;
 """
         
         cursor.execute(query)
@@ -579,7 +582,272 @@ GROUP BY
     
     conn.close()
 
+def creer_vue_jour(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        """Crée une vue pour une colonne spécifique."""
+        conn = sqlite3.connect('results_chunks.db')
+        cursor = conn.cursor()
+        
+        # Récupération du maximum de la colonne 'semaine'
+        cursor.execute("SELECT MAX(jour) FROM bague_heure")
+        max_jour = cursor.fetchone()[0]
+       
+        if max_jour is None:
+           print("La table 'bague_heure' est vide.")
+           return
+       
+        query_parts = [
+            f"SUM(CASE WHEN jour = {j+1} THEN {colonne} END) AS J_{(j+1):02d}_{colonne}"
+            for j in range(max_jour)
+        ]
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_jour_{colonne} AS
+SELECT 
+    parquet, mangeoire, evenement, bague, sources_concatenées,
+    {', '.join(query_parts)}
+FROM 
+    bague_heure
+GROUP BY 
+    parquet, mangeoire, evenement, bague, sources_concatenées;
+"""
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+    
+def creer_vue_jour_parquet(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    # Récupération du maximum de la colonne 'semaine'
+    cursor.execute("SELECT MAX(jour) FROM bague_heure")
+    max_jour = cursor.fetchone()[0]
+   
+    if max_jour is None:
+       print("La table 'bague_heure' est vide.")
+       return
+   
+    query_parts = [
+        # f"MAX(CASE WHEN jour = {s+1} THEN {colonne} END) AS s_{(s+1):02d}_{colonne}"
+        f"SELECT SUM(CASE WHEN jour = {s+1} THEN {colonne} END) AS s_{(s+1):02d}_{colonne}"
+        for s in range(max_jour)
+    ]
+    
+    try:
+        query_parts = [
+            f"SUM(CASE WHEN jour = {j+1} THEN {colonne} END) AS J_{(j+1):02d}_{colonne}"
+            for j in range(max_jour)
+        ]
+        
+        query_parts_2 = [
+            f"SUM(J_{(j+1):02d}_{colonne}) AS J_{(j+1):02d}_{colonne}"
+            for j in range(max_jour)
+        ]
+        
+        print (query_parts_2)
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_jour_parquet_{colonne} AS
+SELECT parquet,
+       evenement,
+       sources_concatenées,
+       REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+        {', '.join(query_parts_2)}
+        
+from
+    (SELECT parquet, 
+           mangeoire, 
+           evenement,
+           sources_concatenées, 
+           {', '.join(query_parts)}
+    FROM bague_heure
+    GROUP BY parquet, 
+             mangeoire, 
+             sources_concatenées, 
+             evenement
+) AS a
+GROUP BY parquet,  
+         sources_concatenées, 
+         evenement;
 
+"""
+        print(query)
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+    
+
+def creer_vue_jour_parquet_(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    
+    # Connexion à la base de données
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        # Récupération du maximum de la colonne 'jour'
+        cursor.execute("SELECT MAX(jour) FROM bague_heure")
+        max_jour = cursor.fetchone()[0]
+        
+        if max_jour is None:
+            print("La table 'bague_heure' est vide.")
+            return
+        
+        # Création des parties de la requête SQL
+        query_parts = [
+            f"SUM(CASE WHEN jour = {j+1} THEN {colonne} END) AS J_{(j+1):02d}_{colonne}"
+            for j in range(max_jour)
+        ]
+        
+        query_parts_2 = [
+            f"SUM(J_{(j+1):02d}_{colonne}) as  J_{(j+1):02d}_{colonne}"
+            for j in range(max_jour)
+        ]
+        
+        # Construction complète de la requête SQL
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_jour_parquet_{colonne} AS
+SELECT parquet,
+       evenement,
+       sources_concatenées,
+       REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+       {', '.join(query_parts_2)}
+FROM (
+    SELECT parquet, 
+           mangeoire, 
+           evenement,
+           sources_concatenées, 
+           {', '.join(query_parts)}
+    FROM bague_heure
+    GROUP BY parquet, 
+             mangeoire, 
+             sources_concatenées, 
+             evenement
+) AS a
+GROUP BY parquet,  
+         sources_concatenées, 
+         evenement;
+"""
+        
+        # Exécution de la requête SQL
+        cursor.execute(query)
+        
+        # Validation des modifications
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_jour_parquet_{colonne}' : {e}")
+    finally:
+        # Fermeture de la connexion à la base de données
+        cursor.close()
+        conn.close()
+
+def creer_vue_semaine(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        # Récupération du maximum de la colonne 'semaine'
+        cursor.execute("SELECT MAX(semaine) FROM bague_heure")
+        max_semaine = cursor.fetchone()[0]
+       
+        if max_semaine is None:
+           print("La table 'bague_heure' est vide.")
+           return
+       
+        query_parts = [
+            f"MAX(CASE WHEN jour = {s+1} THEN {colonne} END) AS s_{(s+1):02d}_{colonne}"
+            for s in range(max_semaine)
+        ]
+        # Récupération du maximum de la colonne 'semaine'
+        cursor.execute("SELECT MAX(semaine) FROM bague_heure")
+        max_semaine = cursor.fetchone()[0]
+       
+        if max_semaine is None:
+           print("La table 'bague_heure' est vide.")
+           return
+       
+        query_parts = [
+            f"SUM(CASE WHEN semaine = {s+1} THEN {colonne} END) AS S_{(s+1):02d}_{colonne}"
+            for s in range(max_semaine)
+        ]
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_semaine_{colonne} AS
+SELECT 
+    parquet, mangeoire, evenement, bague, sources_concatenées,
+    {', '.join(query_parts)}
+FROM 
+    bague_heure
+GROUP BY 
+    parquet, mangeoire, evenement, bague, sources_concatenées;
+"""
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+    
+def creer_vue_semaine_parquet(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        # Récupération du maximum de la colonne 'semaine'
+        cursor.execute("SELECT MAX(semaine) FROM bague_heure")
+        max_semaine = cursor.fetchone()[0]
+       
+        if max_semaine is None:
+           print("La table 'bague_heure' est vide.")
+           return
+       
+        query_parts = [
+            f"SUM(CASE WHEN jour = {s+1} THEN {colonne} END) AS s_{(s+1):02d}_{colonne}"
+            for s in range(max_semaine)
+        ]
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_semaine_parquet_{colonne} AS
+SELECT 
+    parquet,
+		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+		evenement, bague, 
+		sources_concatenées, 
+        semaine,
+    {', '.join(query_parts)}
+FROM 
+    bague_heure
+GROUP BY 
+    parquet, evenement, bague;
+"""
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+    
 def database_construct():
     """Point d'entrée du programme."""
     init_database()
@@ -589,14 +857,30 @@ def database_construct():
     creer_table_bague_heure()
     
     # Création des vues génériques
-    creer_vue_heure('quantite_grammes')
+    # creer_vue_heure('quantite_grammes')
     creer_vue_heure('nombre_prises')
-    creer_vue_heure('duree_prises')
+    # creer_vue_heure('duree_prises')
     
-    creer_vue_heure_parquet('quantite_grammes')
+    # creer_vue_heure_parquet('quantite_grammes')
     creer_vue_heure_parquet('nombre_prises')
-    creer_vue_heure_parquet('duree_prises')
-
+    # creer_vue_heure_parquet('duree_prises')
+    
+    # creer_vue_jour('quantite_grammes')
+    creer_vue_jour('nombre_prises')
+    # creer_vue_jour('duree_prises')
+    
+    # creer_vue_jour_parquet('quantite_grammes')
+    creer_vue_jour_parquet_('nombre_prises')
+    # creer_vue_jour_parquet('duree_prises')
+    
+    # creer_vue_semaine('quantite_grammes')
+    creer_vue_semaine('nombre_prises')
+    # creer_vue_semaine('duree_prises')
+    
+    # creer_vue_semaine_parquet('quantite_grammes')
+    creer_vue_semaine_parquet('nombre_prises')
+    # creer_vue_semaine_parquet('duree_prises')
+    
 if __name__ == "__main__":
     import yaml
     resultats = main()
