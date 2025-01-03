@@ -63,6 +63,7 @@ def calculer_stats(df, chemin_fichier):
 
     Args:
         df (pd.DataFrame): DataFrame pour lequel calculer les statistiques.
+        chemin_fichier (str): Chemin du fichier CSV traité.
 
     Returns:
         stats (dict): Dictionnaire contenant les statistiques.
@@ -71,6 +72,7 @@ def calculer_stats(df, chemin_fichier):
     # Calculer les statistiques numériques
     stats_numerique = calculer_stats_numeriques(df)
     
+    # Calculer les statistiques non numériques par colonne
     stats_non_numerique_par_colonne = calculer_stats_non_numeriques_par_colonne(df)
     
     return {'numerique': stats_numerique, 'non_numerique': stats_non_numerique_par_colonne, 'fichier': chemin_fichier }
@@ -94,16 +96,18 @@ def convertir_date_locale_en_timestamp(df):
     
     return df
 
-def traiter_fichier(chemin_fichier, date):
+def traiter_fichier(chemin_fichier, date, parquets, bague):
     """
     Traite un fichier CSV et renvoie le DataFrame correspondant.
 
     Args:
         chemin_fichier (str): Chemin du fichier CSV à traiter.
         date (int): Timestamp numérique de la date à utiliser pour les calculs.
+        parquets (dict): Dictionnaire de correspondance entre 'mangeoire' et 'parquet'.
 
     Returns:
         df (pd.DataFrame): DataFrame résultant de la lecture du fichier CSV.
+        stats_apres (dict): Dictionnaire contenant les statistiques après traitement.
     """
 
     # Mesurer le temps d'exécution pour ce fichier
@@ -115,14 +119,39 @@ def traiter_fichier(chemin_fichier, date):
     # Appliquer la fonction de conversion date_locale -> timestamp
     df = convertir_date_locale_en_timestamp(df)
     
-    df['Fichier'] = chemin_fichier  # Ajout d'une colonne avec le nom du fichier
+    # Ajout d'une colonne avec le nom du fichier
+    df['Fichier'] = chemin_fichier
+   
+    # Ajouter la nouvelle colonne parquet en utilisant la liste de correspondance
+    df['parquet'] = df['mangeoire'].map(parquets)
+    df['bague'] = df['source'].map(bague)
     
+    # Ajout de la colonne delta pour le jour et la semaine
+    df['jour'] = (pd.to_timedelta(df['timestamp_num'] - date, unit='s').dt.days) + 1
+    df['semaine'] = ((pd.to_timedelta(df['timestamp_num'] - date, unit='s').dt.days)//7) + 1
+    
+    # Supprimer les colonnes inutiles
+    df = df.drop(columns=['date_locale', 'timestamp', 'timestamp_num'])
+    
+    df['heure'] = df['heures'].str.split(':').str[0]
+    
+    # Groupement du DataFrame par les colonnes spécifiées
+    grouped_df = df.groupby(['date', 'mangeoire', 'evenement', 'source', 'bague', 'Fichier', 'parquet', 'heure',  'jour', 'semaine'])
+    
+    # Calcul des sommes pour les colonnes spécifiées
+    result_df = grouped_df[['avant_g', 'apres_g', 'conso_g', 'duree_s']].sum().reset_index()
+    
+    # Calcul du nombre de lignes par groupe
+    result_df['compt'] = grouped_df.size().reset_index(name='nombre_lignes')['nombre_lignes']
+
     # Calculer les statistiques après traitement
     stats_apres = calculer_stats(df, chemin_fichier )
     
-    enregistrer_resultats(df, 'results_chunks.db')
+    # Enregistrer le résultat dans une base de données SQLite
+    enregistrer_resultats(result_df, 'results_chunks.db')
     
-    return df, stats_apres
+    return result_df, stats_apres
+
 
 def main():
     """
@@ -134,6 +163,8 @@ def main():
     chemin_dossier = r'.\CSV\chunks'  # Chemin du dossier contenant les fichiers CSV
     
     date = recuperer_date_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))  # Récupérer la date à partir du fichier YAML
+    parquet = recuperer_parquet_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
+    bague = recuperer_bague_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
     
     print (date)
 
@@ -154,7 +185,7 @@ def main():
             print(f"Le répertoire {chemin_dossier_courant} ne contient aucun fichier .csv.")
             continue  # passer à la prochaine itération
         
-        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date)  # Traiter le dossier
+        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date, parquet, bague)  # Traiter le dossier
         
         end_time_file = time.time()  # Mesurer le temps d'arrêt pour ce fichier
         
@@ -172,7 +203,7 @@ def main():
     
     return results
 
-def traiter_dossier(root, files, date):
+def traiter_dossier(root, files, date, parquets, bague):
     """
     Traite un dossier contenant des fichiers CSV et renvoie le DataFrame final résultant de la concaténation.
 
@@ -180,9 +211,11 @@ def traiter_dossier(root, files, date):
         root (str): Chemin du répertoire à traiter.
         files (list): Liste des fichiers CSV à traiter.
         date (int): Timestamp numérique de la date à utiliser pour les calculs.
+        parquets (dict): Dictionnaire de correspondance entre 'mangeoire' et 'parquet'.
 
     Returns:
         df_final (pd.DataFrame): DataFrame final résultant de la concaténation des DataFrames individuels.
+        stats_final (list): Liste de dictionnaires contenant les statistiques après traitement pour chaque fichier.
     """
     
     # Initialiser une liste pour stocker les DataFrames
@@ -202,7 +235,7 @@ def traiter_dossier(root, files, date):
             if chemin_fichier not in existing_file_name:
                 
                 # Lecture du fichier CSV et ajout d'une colonne avec le nom du fichier
-                df, stats_apres = traiter_fichier(chemin_fichier, date)  # Traitement du fichier
+                df, stats_apres = traiter_fichier(chemin_fichier, date, parquets, bague)  # Traitement du fichier
             
                 # Ajouter le DataFrame au liste des DataFrames
                 dfs.append((df, stats_apres ))
@@ -284,55 +317,287 @@ def recuperer_date_yaml(chemin_fichier):
         print("La clé 'date' n'est pas présente dans le fichier YAML.")
         return None
     
-def main():
+def recuperer_parquet_yaml(chemin_fichier):
     """
-    Fonction principale qui traite tous les fichiers CSV dans les répertoires spécifiés.
+    Récupère une correspondance de mangeoires à partir d'un fichier YAML.
+    
+    Args:
+        chemin_fichier (str): Chemin du fichier YAML contenant la liste des correspondances de mangeoires/parquet.
+    
+    Returns:
+        dict: Dictionnaire contenant les correspondances de mangeoires/parquet.
     """
-    
-    start_time_total = time.time()  # Mesurer le temps d'exécution total
-    
-    chemin_dossier = r'.\CSV\chunks'  # Chemin du dossier contenant les fichiers CSV
-    
-    date = recuperer_date_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))  # Récupérer la date à partir du fichier YAML
-    
-    print (date)
 
-    results = []
-    
-    for i in range(1, 5):  # boucle sur M01 à M04
-        start_time_file = time.time()
-        
-        chemin_dossier_courant = os.path.join(chemin_dossier, f'M0{i}')  # Chemin du répertoire actuel
-        
-        if not os.path.exists(chemin_dossier_courant):  # si le répertoire n'existe pas
-            print(f"Le répertoire {chemin_dossier_courant} n'existe pas.")
-            continue  # passer à la prochaine itération
+    try:
+        with open(chemin_fichier, 'r') as f:
+            data = yaml.safe_load(f)
+            date_str = data['liste_mangeoires']
+        return date_str
+    except FileNotFoundError:
+        print("Le fichier YAML n'existe pas.")
+        return None
+    except KeyError:
+        print("La clé 'liste_mangeoires' n'est pas présente dans le fichier YAML.")
+        return None
 
-        files = [f for f in os.listdir(chemin_dossier_courant) if f.endswith('.csv')]  # récupérer uniquement les fichiers .csv
-        
-        if not files:  # si la liste de fichiers est vide
-            print(f"Le répertoire {chemin_dossier_courant} ne contient aucun fichier .csv.")
-            continue  # passer à la prochaine itération
-        
-        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date)  # Traiter le dossier
-        
-        end_time_file = time.time()  # Mesurer le temps d'arrêt pour ce fichier
-        
-        execution_time_file = (end_time_file - start_time_file)  # Calculer la durée totale pour ce fichier
-        
-        print(f"Temps d'exécution pour {chemin_dossier_courant} : {execution_time_file:.2f} secondes")
-        
-        results.append((df_final, stats_apres))
-        
+def recuperer_bague_yaml(chemin_fichier):
+    """
+    Récupère une bague à partir d'un fichier YAML.
     
-    end_time_total = time.time()
-    execution_time_total = (end_time_total - start_time_total)  # Calculer la durée totale en millisecondes
+    Args:
+        chemin_fichier (str): Chemin du fichier YAML contenant la liste des bagues.
+    
+    Returns:
+        dict: Dictionnaire contenant les informations de la bague.
+    """
 
-    print(f"\nTemps d'exécution total : {execution_time_total:.2f} secondes")
+    try:
+        with open(chemin_fichier, 'r') as f:
+            data = yaml.safe_load(f)
+            date_str = data['bague']
+        return date_str
+    except FileNotFoundError:
+        print("Le fichier YAML n'existe pas.")
+        return None
+    except KeyError:
+        print("La clé 'bague' n'est pas présente dans le fichier YAML.")
+        return None
     
-    return results
+def init_database():
+    """Initialise la base de données en supprimant les tables existantes."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    # Suppression des tables si elles existent déjà
+    cursor.execute("DROP TABLE IF EXISTS aggregate_bague_source;")
+    cursor.execute("DROP TABLE IF EXISTS conso_indiv_semaine_mangeoire;")
+    cursor.execute("DROP TABLE IF EXISTS conso_indiv_semaine_parquet;")
+    cursor.execute("DROP TABLE IF EXISTS bague_heure;")
+    conn.commit()  # Sauvegarde des modifications
+    
+    conn.close()
+
+def creer_table_aggregate_bague_source():
+    """Crée la table 'aggregate_bague_source' si elle n'existe pas déjà."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+CREATE TABLE aggregate_bague_source AS
+SELECT 
+    bague, 
+    REPLACE(GROUP_CONCAT(DISTINCT source ORDER BY source), ',', '/') AS sources_concatenées
+FROM results
+GROUP BY bague;
+""")
+        conn.commit()  # Sauvegarde des modifications
+    except sqlite3.OperationalError as e:
+        if "already exists" in str(e):
+            print("La table aggregate_bague_source existe déjà.")
+        else:
+            raise
+    
+    conn.close()
+
+def creer_table_conso_indiv_semaine_mangeoire():
+    """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+CREATE TABLE conso_indiv_semaine_mangeoire AS
+SELECT
+	mangeoire,
+	evenement,
+	bague,
+	sources_concatenées,
+	jour, 
+	sum(conso_g) as quantite_grammes	
+FROM
+	(SELECT 
+	    r.*, 
+	    abs.bague,
+	    abs.sources_concatenées
+	FROM 
+	    results r
+	INNER JOIN 
+	    aggregate_bague_source abs ON r.bague = abs.bague)
+GROUP BY bague, jour, mangeoire, sources_concatenées, evenement;
+""")
+        conn.commit()  # Sauvegarde des modifications
+    except sqlite3.OperationalError as e:
+        if "already exists" in str(e):
+            print("La table utilisation_mangeoires existe déjà.")
+        else:
+            raise
+    
+    conn.close()
+    
+def creer_table_conso_indiv_semaine_parquet():
+    """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+CREATE TABLE conso_indiv_semaine_parquet AS
+SELECT
+	parquet,
+	evenement,
+	bague,
+	sources_concatenées,
+	jour, 
+	sum(conso_g) as quantite_grammes	
+FROM
+	(SELECT 
+	    r.*, 
+	    abs.bague,
+	    abs.sources_concatenées
+	FROM 
+	    results r
+	INNER JOIN 
+	    aggregate_bague_source abs ON r.bague = abs.bague)
+GROUP BY bague, jour, parquet, sources_concatenées, evenement;
+""")
+        conn.commit()  # Sauvegarde des modifications
+    except sqlite3.OperationalError as e:
+        if "already exists" in str(e):
+            print("La table utilisation_parquet existe déjà.")
+        else:
+            raise
+    
+    conn.close()
+    
+def creer_table_bague_heure():
+    """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+CREATE TABLE bague_heure AS
+SELECT
+	parquet,
+    mangeoire,
+	evenement,
+	bague,
+	sources_concatenées,
+	jour, 
+    heure,
+	sum(conso_g) as quantite_grammes,	
+    sum(compt) as nombre_prises,
+    sum(duree_s) as duree_prises
+FROM
+	(SELECT 
+	    r.*, 
+	    abs.bague,
+	    abs.sources_concatenées
+	FROM 
+	    results r
+	INNER JOIN 
+	    aggregate_bague_source abs ON r.bague = abs.bague)
+GROUP BY	parquet,
+            mangeoire,
+        	evenement,
+        	bague,
+        	sources_concatenées,
+        	jour,
+            heure;
+""")
+        conn.commit()  # Sauvegarde des modifications
+    except sqlite3.OperationalError as e:
+        if "already exists" in str(e):
+            print("La table utilisation_parquet existe déjà.")
+        else:
+            raise
+    
+    conn.close()
+    
+def creer_vue_heure(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        query_parts = [
+            f"MAX(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
+            for h in range(24)
+        ]
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_heure_{colonne} AS
+SELECT 
+    parquet, mangeoire, evenement, bague, sources_concatenées, jour,
+    {', '.join(query_parts)}
+FROM 
+    bague_heure
+GROUP BY 
+    parquet, mangeoire, evenement, bague, sources_concatenées, jour;
+"""
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+    
+def creer_vue_heure_parquet(colonne):
+    """Crée une vue pour une colonne spécifique."""
+    conn = sqlite3.connect('results_chunks.db')
+    cursor = conn.cursor()
+    
+    try:
+        query_parts = [
+            f"MAX(CASE WHEN heure = {h} THEN {colonne} END) AS H_{h:02d}_{colonne}"
+            for h in range(24)
+        ]
+        
+        query = f"""
+CREATE VIEW IF NOT EXISTS vue_heure_parquet_{colonne} AS
+SELECT 
+    parquet,
+		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+		evenement, bague, 
+		sources_concatenées, 
+		jour, 
+    {', '.join(query_parts)}
+FROM 
+    bague_heure
+GROUP BY 
+    parquet, evenement, bague, jour, jour;
+"""
+        
+        cursor.execute(query)
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+    
+    conn.close()
+
+
+def database_construct():
+    """Point d'entrée du programme."""
+    init_database()
+    creer_table_aggregate_bague_source()
+    creer_table_conso_indiv_semaine_mangeoire()
+    creer_table_conso_indiv_semaine_parquet()
+    creer_table_bague_heure()
+    
+    # Création des vues génériques
+    creer_vue_heure('quantite_grammes')
+    creer_vue_heure('nombre_prises')
+    creer_vue_heure('duree_prises')
+    
+    creer_vue_heure_parquet('quantite_grammes')
+    creer_vue_heure_parquet('nombre_prises')
+    creer_vue_heure_parquet('duree_prises')
 
 if __name__ == "__main__":
     import yaml
     resultats = main()
-   
+    database_construct()
