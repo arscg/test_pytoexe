@@ -862,29 +862,17 @@ def database_construct():
     creer_table_bague_heure()
     
     # Création des vues génériques
-    # creer_vue_heure('quantite_grammes')
     creer_vue_heure('nombre_prises')
-    # creer_vue_heure('duree_prises')
     
-    # creer_vue_heure_parquet('quantite_grammes')
     creer_vue_heure_parquet('nombre_prises')
-    # creer_vue_heure_parquet('duree_prises')
     
-    # creer_vue_jour('quantite_grammes')
     creer_vue_jour('nombre_prises')
-    # creer_vue_jour('duree_prises')
     
-    # creer_vue_jour_parquet('quantite_grammes')
     creer_vue_jour_parquet_('nombre_prises')
-    # creer_vue_jour_parquet('duree_prises')
     
-    # creer_vue_semaine('quantite_grammes')
     creer_vue_semaine('nombre_prises')
-    # creer_vue_semaine('duree_prises')
     
-    # creer_vue_semaine_parquet('quantite_grammes')
     creer_vue_semaine_parquet('nombre_prises')
-    # creer_vue_semaine_parquet('duree_prises')
     
 if __name__ == "__main__":
     import yaml
