@@ -559,21 +559,34 @@ def creer_vue_heure_parquet(colonne):
             for h in range(24)
         ]
         
+        query_parts_2 = [
+            f"SUM(H_{(h):02d}_{colonne}) as  H_{(h):02d}_{colonne}"
+            for h in range(24)
+        ]
+        
         query = f"""
 CREATE VIEW IF NOT EXISTS vue_heure_parquet_{colonne} AS
-SELECT 
-    parquet,
-		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
-		evenement, bague, 
-		sources_concatenées, 
-		jour, 
-    {', '.join(query_parts)}
-FROM 
-    bague_heure
-GROUP BY 
-    parquet, evenement, bague, jour;
+SELECT parquet,
+REPLACE(GROUP_CONCAT(DISTINCT mangeoires ORDER BY mangeoires), ',', '/') AS mangeoires,
+evenement, bague, 
+sources_concatenées, 
+jour,
+       {', '.join(query_parts_2)}
+FROM (
+    SELECT 
+        parquet,
+    		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+    		evenement, bague, 
+    		sources_concatenées, 
+    		jour, 
+        {', '.join(query_parts)}
+    FROM 
+        bague_heure
+    GROUP BY 
+        parquet, evenement, bague, jour
+) AS a
+GROUP BY parquet, evenement, bague, jour;
 """
-        
         cursor.execute(query)
         
         conn.commit()
@@ -821,30 +834,44 @@ def creer_vue_semaine_parquet(colonne):
            return
        
         query_parts = [
-            f"SUM(CASE WHEN jour = {s+1} THEN {colonne} END) AS s_{(s+1):02d}_{colonne}"
+            f"SUM(CASE WHEN semaine = {s+1} THEN {colonne} END) AS S_{(s+1):02d}_{colonne}"
             for s in range(max_semaine)
         ]
         
+        query_parts_2 = [
+            f"SUM(S_{(s+1):02d}_{colonne}) as  S_{(s+1):02d}_{colonne}"
+            for s in range(max_semaine)
+        ]
+
         query = f"""
 CREATE VIEW IF NOT EXISTS vue_semaine_parquet_{colonne} AS
-SELECT 
-    parquet,
-		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
-		evenement, bague, 
-		sources_concatenées, 
-        semaine,
-    {', '.join(query_parts)}
-FROM 
-    bague_heure
-GROUP BY 
-    parquet, evenement, bague;
+SELECT parquet,
+REPLACE(GROUP_CONCAT(DISTINCT mangeoires ORDER BY mangeoires), ',', '/') AS mangeoires,
+evenement, bague, 
+sources_concatenées, 
+    {', '.join(query_parts_2)}
+FROM (
+    SELECT 
+        parquet,
+    		REPLACE(GROUP_CONCAT(DISTINCT mangeoire ORDER BY mangeoire), ',', '/') AS mangeoires,
+    		evenement, bague, 
+    		sources_concatenées, 
+            semaine,
+         {', '.join(query_parts)}
+    FROM 
+        bague_heure
+    GROUP BY 
+        parquet, evenement, bague
+) AS a
+GROUP BY parquet, evenement, bague;
 """
-        
         cursor.execute(query)
         
         conn.commit()
     except sqlite3.Error as e:
         print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
+        
+    
     
     conn.close()
     
