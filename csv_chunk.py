@@ -96,7 +96,7 @@ def convertir_date_locale_en_timestamp(df):
     
     return df
 
-def traiter_fichier(chemin_fichier, date, parquets, bague):
+def traiter_fichier(chemin_fichier, database, date, parquets, bague):
     """
     Traite un fichier CSV et renvoie le DataFrame correspondant.
 
@@ -149,62 +149,14 @@ def traiter_fichier(chemin_fichier, date, parquets, bague):
     stats_apres = calculer_stats(df, chemin_fichier )
     
     # Enregistrer le résultat dans une base de données SQLite
-    enregistrer_resultats(result_df, 'results_chunks.db')
+    enregistrer_resultats(result_df, database)
     
     return result_df, stats_apres
 
 
-def main():
-    """
-    Fonction principale qui traite tous les fichiers CSV dans les répertoires spécifiés.
-    """
-    
-    start_time_total = time.time()  # Mesurer le temps d'exécution total
-    
-    chemin_dossier = r'.\CSV\chunks'  # Chemin du dossier contenant les fichiers CSV
-    
-    date = recuperer_date_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))  # Récupérer la date à partir du fichier YAML
-    parquet = recuperer_parquet_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
-    bague = recuperer_bague_yaml( os.path.join(chemin_dossier, 'comfig.yaml'))
-    
-    print (date)
 
-    results = []
-    
-    for i in range(1, 5):  # boucle sur M01 à M04
-        start_time_file = time.time()
-        
-        chemin_dossier_courant = os.path.join(chemin_dossier, f'M0{i}')  # Chemin du répertoire actuel
-        
-        if not os.path.exists(chemin_dossier_courant):  # si le répertoire n'existe pas
-            print(f"Le répertoire {chemin_dossier_courant} n'existe pas.")
-            continue  # passer à la prochaine itération
 
-        files = [f for f in os.listdir(chemin_dossier_courant) if f.endswith('.csv')]  # récupérer uniquement les fichiers .csv
-        
-        if not files:  # si la liste de fichiers est vide
-            print(f"Le répertoire {chemin_dossier_courant} ne contient aucun fichier .csv.")
-            continue  # passer à la prochaine itération
-        
-        df_final, stats_apres = traiter_dossier(chemin_dossier_courant, files, date, parquet, bague)  # Traiter le dossier
-        
-        end_time_file = time.time()  # Mesurer le temps d'arrêt pour ce fichier
-        
-        execution_time_file = (end_time_file - start_time_file)  # Calculer la durée totale pour ce fichier
-        
-        print(f"Temps d'exécution pour {chemin_dossier_courant} : {execution_time_file:.2f} secondes")
-        
-        results.append((df_final, stats_apres))
-        
-    
-    end_time_total = time.time()
-    execution_time_total = (end_time_total - start_time_total)  # Calculer la durée totale en millisecondes
-
-    print(f"\nTemps d'exécution total : {execution_time_total:.2f} secondes")
-    
-    return results
-
-def traiter_dossier(root, files, date, parquets, bague):
+def traiter_dossier(database, root, files, date, parquets, bague):
     """
     Traite un dossier contenant des fichiers CSV et renvoie le DataFrame final résultant de la concaténation.
 
@@ -223,7 +175,7 @@ def traiter_dossier(root, files, date, parquets, bague):
     dfs = []
     
     try:
-        conn = sqlite3.connect('results_chunks.db')
+        conn = sqlite3.connect(database)
         existing_file_name = pd.read_sql(f"SELECT Fichier FROM results", conn).values
     except:
         existing_file_name=[]
@@ -236,7 +188,7 @@ def traiter_dossier(root, files, date, parquets, bague):
             if chemin_fichier not in existing_file_name:
                 
                 # Lecture du fichier CSV et ajout d'une colonne avec le nom du fichier
-                df, stats_apres = traiter_fichier(chemin_fichier, date, parquets, bague)  # Traitement du fichier
+                df, stats_apres = traiter_fichier(chemin_fichier, database, date, parquets, bague)  # Traitement du fichier
             
                 # Ajouter le DataFrame au liste des DataFrames
                 dfs.append((df, stats_apres ))
@@ -364,9 +316,33 @@ def recuperer_bague_yaml(chemin_fichier):
         print("La clé 'bague' n'est pas présente dans le fichier YAML.")
         return None
     
-def init_database():
+
+def recuperer_dataset_yaml(chemin_fichier):
+    """
+    Récupère une bague à partir d'un fichier YAML.
+    
+    Args:
+        chemin_fichier (str): Chemin du fichier YAML contenant la liste des bagues.
+    
+    Returns:
+        dict: Dictionnaire contenant les informations de la bague.
+    """
+
+    try:
+        with open(chemin_fichier, 'r') as f:
+            data = yaml.safe_load(f)
+            date_str = data['dataset_path']
+        return date_str
+    except FileNotFoundError:
+        print("Le fichier YAML n'existe pas.")
+        return None
+    except KeyError:
+        print("La clé 'dataset' n'est pas présente dans le fichier YAML.")
+        return None
+    
+def init_database(database):
     """Initialise la base de données en supprimant les tables existantes."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     # Suppression des tables si elles existent déjà
@@ -378,9 +354,9 @@ def init_database():
     
     conn.close()
 
-def creer_table_aggregate_bague_source():
+def creer_table_aggregate_bague_source(database):
     """Crée la table 'aggregate_bague_source' si elle n'existe pas déjà."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -401,79 +377,10 @@ GROUP BY bague;
     
     conn.close()
 
-def creer_table_conso_indiv_semaine_mangeoire():
+
+def creer_table_bague_heure(database):
     """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
-    conn = sqlite3.connect('results_chunks.db')
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute("""
-CREATE TABLE conso_indiv_semaine_mangeoire AS
-SELECT
-	mangeoire,
-	evenement,
-	bague,
-	sources_concatenées,
-	jour, 
-	sum(conso_g) as quantite_grammes	
-FROM
-	(SELECT 
-	    r.*, 
-	    abs.bague,
-	    abs.sources_concatenées
-	FROM 
-	    results r
-	INNER JOIN 
-	    aggregate_bague_source abs ON r.bague = abs.bague)
-GROUP BY bague, jour, mangeoire, sources_concatenées, evenement;
-""")
-        conn.commit()  # Sauvegarde des modifications
-    except sqlite3.OperationalError as e:
-        if "already exists" in str(e):
-            print("La table utilisation_mangeoires existe déjà.")
-        else:
-            raise
-    
-    conn.close()
-    
-def creer_table_conso_indiv_semaine_parquet():
-    """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
-    conn = sqlite3.connect('results_chunks.db')
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute("""
-CREATE TABLE conso_indiv_semaine_parquet AS
-SELECT
-	parquet,
-	evenement,
-	bague,
-	sources_concatenées,
-	jour, 
-	sum(conso_g) as quantite_grammes	
-FROM
-	(SELECT 
-	    r.*, 
-	    abs.bague,
-	    abs.sources_concatenées
-	FROM 
-	    results r
-	INNER JOIN 
-	    aggregate_bague_source abs ON r.bague = abs.bague)
-GROUP BY bague, jour, parquet, sources_concatenées, evenement;
-""")
-        conn.commit()  # Sauvegarde des modifications
-    except sqlite3.OperationalError as e:
-        if "already exists" in str(e):
-            print("La table utilisation_parquet existe déjà.")
-        else:
-            raise
-    
-    conn.close()
-    
-def creer_table_bague_heure():
-    """Crée la table 'utilisation_mangeoires' si elle n'existe pas déjà."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -518,9 +425,9 @@ GROUP BY	parquet,
     
     conn.close()
     
-def creer_vue_heure(colonne):
+def creer_vue_heure(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -548,9 +455,9 @@ GROUP BY
     
     conn.close()
     
-def creer_vue_heure_parquet(colonne):
+def creer_vue_heure_parquet(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -595,14 +502,14 @@ GROUP BY parquet, evenement, bague, jour;
     
     conn.close()
 
-def creer_vue_jour(colonne):
+def creer_vue_jour(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
         """Crée une vue pour une colonne spécifique."""
-        conn = sqlite3.connect('results_chunks.db')
+        conn = sqlite3.connect(database)
         cursor = conn.cursor()
         
         # Récupération du maximum de la colonne 'semaine'
@@ -637,9 +544,9 @@ GROUP BY
     
     conn.close()
     
-def creer_vue_jour_parquet(colonne):
+def creer_vue_jour_parquet(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     # Récupération du maximum de la colonne 'semaine'
@@ -667,8 +574,6 @@ def creer_vue_jour_parquet(colonne):
             for j in range(max_jour)
         ]
         
-        print (query_parts_2)
-        
         query = f"""
 CREATE VIEW IF NOT EXISTS vue_jour_parquet_{colonne} AS
 SELECT parquet,
@@ -694,7 +599,6 @@ GROUP BY parquet,
          evenement;
 
 """
-        print(query)
         
         cursor.execute(query)
         
@@ -705,11 +609,11 @@ GROUP BY parquet,
     conn.close()
     
 
-def creer_vue_jour_parquet_(colonne):
+def creer_vue_jour_parquet_(colonne, database):
     """Crée une vue pour une colonne spécifique."""
     
     # Connexion à la base de données
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -769,9 +673,9 @@ GROUP BY parquet,
         cursor.close()
         conn.close()
 
-def creer_vue_semaine(colonne):
+def creer_vue_semaine(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -819,9 +723,9 @@ GROUP BY
     
     conn.close()
     
-def creer_vue_semaine_parquet(colonne):
+def creer_vue_semaine_parquet(colonne, database):
     """Crée une vue pour une colonne spécifique."""
-    conn = sqlite3.connect('results_chunks.db')
+    conn = sqlite3.connect(database)
     cursor = conn.cursor()
     
     try:
@@ -871,44 +775,90 @@ GROUP BY parquet, evenement, bague;
     except sqlite3.Error as e:
         print(f"Erreur lors de la création de la vue 'vue_mangeoire_heure_{colonne}' : {e}")
         
-    
-    
     conn.close()
+    
+def main():
+    """
+    Fonction principale qui traite tous les fichiers CSV dans les répertoires spécifiés.
+    """ 
+    start_time_total = time.time()  # Mesurer le temps d'exécution total
+    
+    database = 'results_chunks.db'
+    
+    chemin_dossier_dataset = recuperer_dataset_yaml('comfig.yaml')
+    date = recuperer_date_yaml('comfig.yaml')  # Récupérer la date à partir du fichier YAML
+    parquet = recuperer_parquet_yaml('comfig.yaml')
+    bague = recuperer_bague_yaml('comfig.yaml')
+
+    results = []
+    
+    for i in range(1, 5):  # boucle sur M01 à M04
+        start_time_file = time.time()
+        
+        chemin_dossier_courant = os.path.join(chemin_dossier_dataset, f'M0{i}')  # Chemin du répertoire actuel
+        
+        if not os.path.exists(chemin_dossier_courant):  # si le répertoire n'existe pas
+            print(f"Le répertoire {chemin_dossier_courant} n'existe pas.")
+            continue  # passer à la prochaine itération
+
+        files = [f for f in os.listdir(chemin_dossier_courant) if f.endswith('.csv')]  # récupérer uniquement les fichiers .csv
+        
+        if not files:  # si la liste de fichiers est vide
+            print(f"Le répertoire {chemin_dossier_courant} ne contient aucun fichier .csv.")
+            continue  # passer à la prochaine itération
+        
+        df_final, stats_apres = traiter_dossier(database, chemin_dossier_courant, files, date, parquet, bague)  # Traiter le dossier
+        
+        end_time_file = time.time()  # Mesurer le temps d'arrêt pour ce fichier
+        
+        execution_time_file = (end_time_file - start_time_file)  # Calculer la durée totale pour ce fichier
+        
+        print(f"Temps d'exécution pour {chemin_dossier_courant} : {execution_time_file:.2f} secondes")
+        
+        results.append((df_final, stats_apres))
+        
+    
+    end_time_total = time.time()
+    execution_time_total = (end_time_total - start_time_total)  # Calculer la durée totale en millisecondes
+
+    print(f"\nTemps d'exécution total : {execution_time_total:.2f} secondes")
+    
+    return results
     
 def database_construct():
     """Point d'entrée du programme."""
-    init_database()
-    creer_table_aggregate_bague_source()
-    creer_table_conso_indiv_semaine_mangeoire()
-    creer_table_conso_indiv_semaine_parquet()
-    creer_table_bague_heure()
+    database = 'results_chunks.db'
+    
+    init_database(database)
+    creer_table_aggregate_bague_source(database)
+    creer_table_bague_heure(database)
     
     # Création des vues génériques
-    # creer_vue_heure('quantite_grammes')
-    creer_vue_heure('nombre_prises')
-    # creer_vue_heure('duree_prises')
+    creer_vue_heure('quantite_grammes', database)
+    creer_vue_heure('nombre_prises', database)
+    creer_vue_heure('duree_prises', database)
     
-    # creer_vue_heure_parquet('quantite_grammes')
-    creer_vue_heure_parquet('nombre_prises')
-    # creer_vue_heure_parquet('duree_prises')
+    creer_vue_heure_parquet('quantite_grammes', database)
+    creer_vue_heure_parquet('nombre_prises', database)
+    creer_vue_heure_parquet('duree_prises', database)
     
-    # creer_vue_jour('quantite_grammes')
-    creer_vue_jour('nombre_prises')
-    # creer_vue_jour('duree_prises')
+    creer_vue_jour('quantite_grammes', database)
+    creer_vue_jour('nombre_prises', database)
+    creer_vue_jour('duree_prises', database)
     
-    # creer_vue_jour_parquet('quantite_grammes')
-    creer_vue_jour_parquet_('nombre_prises')
-    # creer_vue_jour_parquet('duree_prises')
+    creer_vue_jour_parquet('quantite_grammes', database)
+    creer_vue_jour_parquet_('nombre_prises', database)
+    creer_vue_jour_parquet('duree_prises', database)
     
-    # creer_vue_semaine('quantite_grammes')
-    creer_vue_semaine('nombre_prises')
-    # creer_vue_semaine('duree_prises')
+    creer_vue_semaine('quantite_grammes', database)
+    creer_vue_semaine('nombre_prises', database)
+    creer_vue_semaine('duree_prises', database)
     
-    # creer_vue_semaine_parquet('quantite_grammes')
-    creer_vue_semaine_parquet('nombre_prises')
-    # creer_vue_semaine_parquet('duree_prises')
+    creer_vue_semaine_parquet('quantite_grammes', database)
+    creer_vue_semaine_parquet('nombre_prises', database)
+    creer_vue_semaine_parquet('duree_prises', database)
     
 if __name__ == "__main__":
-    import yaml
+    
     resultats = main()
     database_construct()
